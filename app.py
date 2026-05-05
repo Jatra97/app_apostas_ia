@@ -119,6 +119,19 @@ with tab2:
     st.header("✍️ Inserção Manual de Estatísticas")
     st.markdown("Preenche os dados do jogo. Não precisas de preencher tudo, foca-te no que achares relevante.")
     
+    # --- Lógica de Sincronização da Posse de Bola ---
+    if 'posse_casa' not in st.session_state:
+        st.session_state.posse_casa = 50
+    if 'posse_fora' not in st.session_state:
+        st.session_state.posse_fora = 50
+
+    def atualiza_posse_fora():
+        st.session_state.posse_fora = 100 - st.session_state.posse_casa
+
+    def atualiza_posse_casa():
+        st.session_state.posse_casa = 100 - st.session_state.posse_fora
+    # ------------------------------------------------
+    
     # 1. Informação Base
     st.subheader("📌 Informação Base")
     col1, col2, col3, col4 = st.columns(4)
@@ -145,18 +158,20 @@ with tab2:
     
     with col_stat1:
         st.markdown(f"**Estatísticas: {equipa_casa} (Casa)**")
-        posse_casa = st.number_input("Posse de Bola (%) Casa", min_value=0, max_value=100, value=50)
+        # Posse ligada à memória
+        st.number_input("Posse de Bola (%) Casa", min_value=0, max_value=100, key="posse_casa", on_change=atualiza_posse_fora)
         remates_casa = st.number_input("Remates Totais Casa", min_value=0, max_value=50, value=0)
         alvo_casa = st.number_input("Remates à Baliza Casa", min_value=0, max_value=50, value=0)
-        ataques_casa = st.number_input("Ataques Perigosos Casa", min_value=0, max_value=200, value=0)
+        cantos_casa = st.number_input("🚩 Cantos Casa", min_value=0, max_value=30, value=0)
         vermelhos_casa = st.number_input("🟥 Cartões Vermelhos Casa", min_value=0, max_value=5, value=0)
 
     with col_stat2:
         st.markdown(f"**Estatísticas: {equipa_fora} (Fora)**")
-        posse_fora = st.number_input("Posse de Bola (%) Fora", min_value=0, max_value=100, value=50)
+        # Posse ligada à memória
+        st.number_input("Posse de Bola (%) Fora", min_value=0, max_value=100, key="posse_fora", on_change=atualiza_posse_casa)
         remates_fora = st.number_input("Remates Totais Fora", min_value=0, max_value=50, value=0)
         alvo_fora = st.number_input("Remates à Baliza Fora", min_value=0, max_value=50, value=0)
-        ataques_fora = st.number_input("Ataques Perigosos Fora", min_value=0, max_value=200, value=0)
+        cantos_fora = st.number_input("🚩 Cantos Fora", min_value=0, max_value=30, value=0)
         vermelhos_fora = st.number_input("🟥 Cartões Vermelhos Fora", min_value=0, max_value=5, value=0)
 
     st.divider()
@@ -169,8 +184,11 @@ with tab2:
     if st.button("🧠 Pedir Análise ao Llama 3.3"):
         with st.spinner("A fundir dados e contexto..."):
             
-            # Construção do Prompt organizado para a IA ler facilmente
             contexto_ia = dados_extra if dados_extra else "Nenhum contexto extra fornecido. Baseia-te apenas na estatística."
+            
+            # Aqui vamos buscar os valores da posse à memória para enviar à IA
+            p_casa = st.session_state.posse_casa
+            p_fora = st.session_state.posse_fora
             
             prompt_usuario = f"""
             Analisa os seguintes dados deste jogo ao vivo e encontra a Value Bet.
@@ -178,8 +196,8 @@ with tab2:
             JOGO: {equipa_casa} {golos_casa} - {golos_fora} {equipa_fora} (Minuto {minuto}')
             ODDS ATUAIS: {odds_mercado}
             
-            ESTATÍSTICAS {equipa_casa}: Posse {posse_casa}%, Remates {remates_casa} (À baliza: {alvo_casa}), Ataques Perigosos: {ataques_casa}, Vermelhos: {vermelhos_casa}.
-            ESTATÍSTICAS {equipa_fora}: Posse {posse_fora}%, Remates {remates_fora} (À baliza: {alvo_fora}), Ataques Perigosos: {ataques_fora}, Vermelhos: {vermelhos_fora}.
+            ESTATÍSTICAS {equipa_casa}: Posse {p_casa}%, Remates {remates_casa} (À baliza: {alvo_casa}), Cantos: {cantos_casa}, Vermelhos: {vermelhos_casa}.
+            ESTATÍSTICAS {equipa_fora}: Posse {p_fora}%, Remates {remates_fora} (À baliza: {alvo_fora}), Cantos: {cantos_fora}, Vermelhos: {vermelhos_fora}.
             
             CONTEXTO HUMANO: {contexto_ia}
             """
