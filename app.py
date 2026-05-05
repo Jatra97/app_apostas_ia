@@ -121,7 +121,7 @@ with tab1:
                 
                 try:
                     # Usamos o gemini-pro para lógica pesada
-                    model = genai.GenerativeModel('gemini-1.5-pro') 
+                    model = genai.GenerativeModel('gemini-1.5-pro-latest') 
                     resposta_ia = model.generate_content(prompt_sistema + "\n\n" + prompt_usuario)
                     st.success(resposta_ia.text)
                 except Exception as e:
@@ -146,7 +146,7 @@ with tab2:
     if st.button("Análise Profunda com IA"):
         if dados_extra:
             with st.spinner("A fundir o teu conhecimento com o meu modelo desportivo..."):
-                model = genai.GenerativeModel('gemini-1.5-pro')
+                model = genai.GenerativeModel('gemini-1.5-pro-latest')
                 prompt = f"""
                 Age como apostador profissional focado em Value Bets.
                 Jogo: {jogo_manual} ao minuto {resultado_minuto}.
