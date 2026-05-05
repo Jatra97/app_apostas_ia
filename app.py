@@ -116,28 +116,84 @@ with tab1:
 
 # === TABA 2: MANUAL ===
 with tab2:
-    st.header("Análise Manual")
-    col1, col2 = st.columns(2)
-    with col1:
-        jogo_manual = st.text_input("Equipas (Ex: Porto vs Sporting)")
-        resultado_minuto = st.text_input("Tempo e Resultado (Ex: 85' | 1-2)")
-    with col2:
-        odds_mercado = st.text_input("Odds nas Casas (Ex: Casa: 5.0, Empate 3.2, Fora: 1.1)")
-        dados_extra = st.text_area("Contexto Estatístico/Humano")
+    st.header("✍️ Inserção Manual de Estatísticas")
+    st.markdown("Preenche os dados do jogo. Não precisas de preencher tudo, foca-te no que achares relevante.")
     
-    if st.button("Análise Profunda com IA"):
-        if dados_extra:
-            with st.spinner("A analisar com Llama 3..."):
-                try:
-                    resposta_ia = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[
-                            {"role": "system", "content": "Age como apostador profissional focado em Value Bets. Responde em Português de Portugal. Dá a aposta de valor e correct score."},
-                            {"role": "user", "content": f"Jogo: {jogo_manual} aos {resultado_minuto}. Odds: {odds_mercado}. Contexto: {dados_extra}."}
-                        ]
-                    )
-                    st.success(resposta_ia.choices[0].message.content)
-                except Exception as e:
-                    st.error(f"Erro: {e}")
-        else:
-            st.warning("Insere algum contexto!")
+    # 1. Informação Base
+    st.subheader("📌 Informação Base")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        equipa_casa = st.text_input("🏠 Equipa Casa", value="Equipa A")
+    with col2:
+        golos_casa = st.number_input("Golos Casa", min_value=0, max_value=20, value=0)
+    with col3:
+        golos_fora = st.number_input("Golos Fora", min_value=0, max_value=20, value=0)
+    with col4:
+        equipa_fora = st.text_input("✈️ Equipa Fora", value="Equipa B")
+        
+    col_min, col_odds = st.columns(2)
+    with col_min:
+        minuto = st.number_input("⏱️ Minuto do Jogo", min_value=0, max_value=120, value=75)
+    with col_odds:
+        odds_mercado = st.text_input("💰 Odds Atuais", placeholder="Ex: Casa 2.10 | X 3.20 | Fora 3.50")
+
+    st.divider()
+
+    # 2. Estatísticas Detalhadas
+    st.subheader("📊 Estatísticas do Jogo")
+    col_stat1, col_stat2 = st.columns(2)
+    
+    with col_stat1:
+        st.markdown(f"**Estatísticas: {equipa_casa} (Casa)**")
+        posse_casa = st.number_input("Posse de Bola (%) Casa", min_value=0, max_value=100, value=50)
+        remates_casa = st.number_input("Remates Totais Casa", min_value=0, max_value=50, value=0)
+        alvo_casa = st.number_input("Remates à Baliza Casa", min_value=0, max_value=50, value=0)
+        ataques_casa = st.number_input("Ataques Perigosos Casa", min_value=0, max_value=200, value=0)
+        vermelhos_casa = st.number_input("🟥 Cartões Vermelhos Casa", min_value=0, max_value=5, value=0)
+
+    with col_stat2:
+        st.markdown(f"**Estatísticas: {equipa_fora} (Fora)**")
+        posse_fora = st.number_input("Posse de Bola (%) Fora", min_value=0, max_value=100, value=50)
+        remates_fora = st.number_input("Remates Totais Fora", min_value=0, max_value=50, value=0)
+        alvo_fora = st.number_input("Remates à Baliza Fora", min_value=0, max_value=50, value=0)
+        ataques_fora = st.number_input("Ataques Perigosos Fora", min_value=0, max_value=200, value=0)
+        vermelhos_fora = st.number_input("🟥 Cartões Vermelhos Fora", min_value=0, max_value=5, value=0)
+
+    st.divider()
+
+    # 3. Contexto Opcional
+    st.subheader("📝 Contexto Extra (Opcional)")
+    dados_extra = st.text_area("Informação humana relevante", placeholder="Ex: Está a chover muito, o melhor avançado da casa saiu lesionado, a equipa visitante está a defender muito recuada...")
+    
+    # Botão de Ação
+    if st.button("🧠 Pedir Análise ao Llama 3.3"):
+        with st.spinner("A fundir dados e contexto..."):
+            
+            # Construção do Prompt organizado para a IA ler facilmente
+            contexto_ia = dados_extra if dados_extra else "Nenhum contexto extra fornecido. Baseia-te apenas na estatística."
+            
+            prompt_usuario = f"""
+            Analisa os seguintes dados deste jogo ao vivo e encontra a Value Bet.
+            
+            JOGO: {equipa_casa} {golos_casa} - {golos_fora} {equipa_fora} (Minuto {minuto}')
+            ODDS ATUAIS: {odds_mercado}
+            
+            ESTATÍSTICAS {equipa_casa}: Posse {posse_casa}%, Remates {remates_casa} (À baliza: {alvo_casa}), Ataques Perigosos: {ataques_casa}, Vermelhos: {vermelhos_casa}.
+            ESTATÍSTICAS {equipa_fora}: Posse {posse_fora}%, Remates {remates_fora} (À baliza: {alvo_fora}), Ataques Perigosos: {ataques_fora}, Vermelhos: {vermelhos_fora}.
+            
+            CONTEXTO HUMANO: {contexto_ia}
+            """
+            
+            prompt_sistema = "Age como apostador profissional focado em Value Bets. Responde sempre em Português de Portugal. Dá a aposta de valor e correct score de forma justificada."
+            
+            try:
+                resposta_ia = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": prompt_sistema},
+                        {"role": "user", "content": prompt_usuario}
+                    ]
+                )
+                st.success(resposta_ia.choices[0].message.content)
+            except Exception as e:
+                st.error(f"Erro na ligação à IA: {e}")
