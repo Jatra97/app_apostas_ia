@@ -7,8 +7,9 @@ try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     FOOTBALL_API_KEY = st.secrets["FOOTBALL_API_KEY"]
     ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+    ALLSPORTS_API_KEY = st.secrets.get("ALLSPORTS_API_KEY", "") # O .get evita erros se te esqueceres de colocar a chave
 except Exception as e:
-    st.error("Erro nas API Keys. Verifica os Secrets no Streamlit Cloud!")
+    st.error("Erro nas API Keys.")
     st.stop()
 
 headers_football = {
@@ -27,13 +28,61 @@ def get_jogos_live():
     return []
 
 @st.cache_data(ttl=60)
-def get_estatisticas_jogo(fixture_id):
-    url = "https://v3.football.api-sports.io/fixtures/statistics"
-    params = {"fixture": fixture_id}
-    resposta = requests.get(url, headers=headers_football, params=params)
-    if resposta.status_code == 200:
-        return resposta.json().get('response', [])
-    return []
+def obter_estatisticas_combinadas(fixture_id, equipa_casa, equipa_fora):
+    stats_finais = {}
+
+    # ==========================================
+    # FONTE 1: API-Football (Principal)
+    # ==========================================
+    try:
+        url_1 = "https://v3.football.api-sports.io/fixtures/statistics"
+        params_1 = {"fixture": fixture_id}
+        resposta_1 = requests.get(url_1, headers=headers_football, params=params_1, timeout=5)
+        
+        if resposta_1.status_code == 200:
+            dados = resposta_1.json().get('response', [])
+            if dados:
+                stats_finais['API-Football'] = dados
+            else:
+                stats_finais['API-Football'] = "Sem estatísticas disponíveis nesta API."
+        else:
+            stats_finais['API-Football'] = "Erro na API."
+    except Exception:
+        stats_finais['API-Football'] = "Falha na ligação (Timeout)."
+
+    # ==========================================
+    # FONTE 2: AllSportsAPI (Backup/Cruzamento)
+    # ==========================================
+    try:
+        if ALLSPORTS_API_KEY:
+            # Pede todos os jogos ao vivo na AllSportsAPI
+            url_2 = f"https://apiv2.allsportsapi.com/football/?met=Livescore&APIkey={ALLSPORTS_API_KEY}"
+            resposta_2 = requests.get(url_2, timeout=5)
+            
+            if resposta_2.status_code == 200:
+                dados_all = resposta_2.json().get('result', [])
+                encontrou_jogo = False
+                
+                # Procura o nosso jogo no meio dos jogos live deles
+                if dados_all:
+                    for jogo in dados_all:
+                        # Comparamos os primeiros 5 caracteres do nome para evitar erros de formatação (ex: "Man Utd" vs "Manchester United")
+                        if equipa_casa[:5].lower() in jogo.get('event_home_team', '').lower() or \
+                           equipa_fora[:5].lower() in jogo.get('event_away_team', '').lower():
+                            
+                            # Guarda as estatísticas deles (se existirem)
+                            stats_finais['AllSportsAPI'] = jogo.get('statistics', "Jogo encontrado, mas sem quadro de stats.")
+                            encontrou_jogo = True
+                            break
+                            
+                if not encontrou_jogo:
+                    stats_finais['AllSportsAPI'] = "Jogo não encontrado nos live scores desta API."
+        else:
+             stats_finais['AllSportsAPI'] = "Chave da AllSportsAPI não configurada."
+    except Exception:
+        stats_finais['AllSportsAPI'] = "Falha na ligação (Timeout)."
+
+    return stats_finais
 
 @st.cache_data(ttl=120)
 def get_odds_live(equipa_casa, equipa_fora):
@@ -93,13 +142,20 @@ with tab1:
                 st.subheader("🧠 Veredicto do Llama 3")
                 
                 prompt_sistema = """
-                És um apostador desportivo profissional e analista tático. 
-                O teu objetivo é encontrar discrepâncias entre as odds e a probabilidade real (Value Bets).
-                Responde SEMPRE em Português de Portugal de forma estruturada: 
-                1. Leitura de Jogo. 
-                2. Aposta de Valor Recomendada. 
-                3. Prognóstico Correct Score.
-                """
+És um apostador desportivo profissional e um analista tático de elite. 
+O teu objetivo é encontrar discrepâncias matemáticas e contextuais entre as odds do mercado e a probabilidade real dos eventos (Value Bets).
+
+ATENÇÃO AOS DADOS (SISTEMA MULTI-API):
+Vou fornecer-te dados estatísticos e de odds provenientes de várias APIs diferentes (API-Football, AllSportsAPI, The-Odds-API, etc).
+1. Degradação Graciosa: Se uma das fontes falhar, devolver erro ou "indisponível", ignora-a completamente e analisa apenas os dados da API que funcionou.
+2. Cruzamento de Dados: Se as estatísticas das duas APIs divergirem ligeiramente (ex: a API 1 diz 5 remates, a API 2 diz 6), assume uma média aproximada e aplica o teu raciocínio tático.
+3. Caça ao Valor: Avalia todas as casas de apostas fornecidas e baseia a tua "Value Bet" sempre na odd mais alta disponível.
+
+Responde SEMPRE em Português de Portugal, de forma fria e estruturada: 
+1. Leitura de Jogo (O que a estatística cruzada nos diz sobre a pressão e o rumo da partida). 
+2. Aposta de Valor Recomendada (Justifica taticamente e indica qual a melhor odd a aproveitar). 
+3. Prognóstico Correct Score.
+"""
                 prompt_usuario = f"Minuto: {tempo}'. Resultado Atual: {casa} {golos_casa} - {golos_fora} {fora}. Estatísticas: {stats}. Odds: {odds}."
                 
                 try:
