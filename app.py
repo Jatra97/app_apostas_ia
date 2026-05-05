@@ -19,13 +19,67 @@ headers_football = {
 
 # 2. Funções com Cache
 @st.cache_data(ttl=60)
-def get_jogos_live():
-    url = "https://v3.football.api-sports.io/fixtures"
-    params = {"live": "all"}
-    resposta = requests.get(url, headers=headers_football, params=params)
-    if resposta.status_code == 200:
-        return resposta.json().get('response', [])
-    return []
+def obter_jogos_live_combinados():
+    jogos_formatados = []
+
+    # ==========================================
+    # TENTATIVA 1: API-Football (Principal)
+    # ==========================================
+    try:
+        url_1 = "https://v3.football.api-sports.io/fixtures"
+        params = {"live": "all"}
+        resp_1 = requests.get(url_1, headers=headers_football, params=params, timeout=5)
+        
+        # A RapidAPI às vezes devolve status 200 mas com uma mensagem de limite excedido. 
+        # Verificamos se 'response' existe e é uma lista válida.
+        dados_1 = resp_1.json()
+        if resp_1.status_code == 200 and 'response' in dados_1 and isinstance(dados_1['response'], list) and len(dados_1['response']) > 0:
+            for j in dados_1['response']:
+                jogos_formatados.append({
+                    'id': j['fixture']['id'],
+                    'tempo': str(j['fixture']['status']['elapsed']),
+                    'casa': j['teams']['home']['name'],
+                    'fora': j['teams']['away']['name'],
+                    'golos_casa': str(j['goals']['home']),
+                    'golos_fora': str(j['goals']['away']),
+                    'fonte': 'API-Football'
+                })
+            return jogos_formatados # Se encontrou, devolve logo e não gasta a segunda API
+    except Exception:
+        pass # Se falhar, passa em silêncio para a tentativa 2
+
+    # ==========================================
+    # TENTATIVA 2: AllSportsAPI (Secundária)
+    # ==========================================
+    try:
+        if ALLSPORTS_API_KEY:
+            url_2 = f"https://apiv2.allsportsapi.com/football/?met=Livescore&APIkey={ALLSPORTS_API_KEY}"
+            resp_2 = requests.get(url_2, timeout=5)
+            dados_2 = resp_2.json()
+            
+            if resp_2.status_code == 200 and 'result' in dados_2 and isinstance(dados_2['result'], list):
+                for j in dados_2['result']:
+                    
+                    # Extrair o resultado (ex: "2 - 1") para golos casa e fora
+                    resultado = str(j.get('event_final_result', '0 - 0'))
+                    golos = resultado.split('-')
+                    g_casa = golos[0].strip() if len(golos) == 2 else "0"
+                    g_fora = golos[1].strip() if len(golos) == 2 else "0"
+                    
+                    jogos_formatados.append({
+                        'id': j.get('event_key'),
+                        'tempo': str(j.get('event_status', '')).replace("'", ""), # Ex: "45"
+                        'casa': j.get('event_home_team', 'Equipa A'),
+                        'fora': j.get('event_away_team', 'Equipa B'),
+                        'golos_casa': g_casa,
+                        'golos_fora': g_fora,
+                        'fonte': 'AllSportsAPI'
+                    })
+                return jogos_formatados
+    except Exception:
+        pass
+
+    return jogos_formatados # Retorna lista vazia se as duas APIs falharem
 
 @st.cache_data(ttl=60)
 def obter_estatisticas_combinadas(fixture_id, equipa_casa, equipa_fora):
@@ -108,21 +162,24 @@ with tab1:
     if st.button("🔄 Atualizar Lista de Jogos Ao Vivo"):
         st.cache_data.clear()
     
-    jogos = get_jogos_live()
+    # Vai buscar os jogos usando a função dupla
+    jogos = obter_jogos_live_combinados()
     
     if not jogos:
-        st.warning("Não há jogos a decorrer ou atingiste o limite da API-Football (100 requests).")
+        st.warning("Não há jogos a decorrer neste momento ou ambas as APIs esgotaram o limite.")
     else:
         opcoes_jogos = {}
         for j in jogos:
-            fixture_id = j['fixture']['id']
-            tempo = j['fixture']['status']['elapsed']
-            casa = j['teams']['home']['name']
-            fora = j['teams']['away']['name']
-            golos_casa = j['goals']['home']
-            golos_fora = j['goals']['away']
+            fixture_id = j['id']
+            tempo = j['tempo']
+            casa = j['casa']
+            fora = j['fora']
+            golos_casa = j['golos_casa']
+            golos_fora = j['golos_fora']
+            fonte = j['fonte']
             
-            nome_display = f"{tempo}' | {casa} {golos_casa} - {golos_fora} {fora}"
+            # Adicionei a [Fonte] para tu saberes de qual API o jogo está a vir!
+            nome_display = f"[{fonte}] {tempo}' | {casa} {golos_casa} - {golos_fora} {fora}"
             opcoes_jogos[nome_display] = (fixture_id, casa, fora, golos_casa, golos_fora, tempo)
         
         jogo_selecionado = st.selectbox("Escolhe o jogo:", list(opcoes_jogos.keys()))
@@ -131,7 +188,8 @@ with tab1:
             fixture_id, casa, fora, golos_casa, golos_fora, tempo = opcoes_jogos[jogo_selecionado]
             
             with st.spinner("A enviar dados para a IA (Llama 3)..."):
-                stats = get_estatisticas_jogo(fixture_id)
+                # O resto do teu código continua igual daqui para a frente...
+                stats = obter_estatisticas_combinadas(fixture_id, casa, fora)
                 odds = get_odds_live(casa, fora)
                 
                 st.subheader(f"📊 Dados: {casa} vs {fora}")
