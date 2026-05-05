@@ -1,79 +1,160 @@
 import streamlit as st
-import json
+import requests
+import google.generativeai as genai
 
-# --- Configuração da Página ---
-st.set_page_config(page_title="AI Betting Analyzer", layout="wide")
-st.title("⚽ AI Betting Analyzer & Value Finder")
+# 1. Configuração das APIs via Secrets do Streamlit
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    FOOTBALL_API_KEY = st.secrets["FOOTBALL_API_KEY"]
+    ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+except Exception as e:
+    st.error("Erro nas API Keys. Verifica os Secrets no Streamlit Cloud!")
+    st.stop()
 
-# --- Tabs da Aplicação ---
-tab1, tab2 = st.tabs(["📊 Jogos Live (API)", "✍️ Inserção Manual (Cérebro IA)"])
+# Headers necessários para comunicar com a API-Football
+headers_football = {
+    "x-rapidapi-key": FOOTBALL_API_KEY,
+    "x-rapidapi-host": "v3.football.api-sports.io"
+}
+
+# 2. Funções com Cache para poupar os teus 100 pedidos diários grátis
+@st.cache_data(ttl=60) # Guarda os dados dos jogos em memória por 60 segundos
+def get_jogos_live():
+    url = "https://v3.football.api-sports.io/fixtures"
+    params = {"live": "all"}
+    resposta = requests.get(url, headers=headers_football, params=params)
+    if resposta.status_code == 200:
+        return resposta.json().get('response', [])
+    return []
+
+@st.cache_data(ttl=60)
+def get_estatisticas_jogo(fixture_id):
+    url = "https://v3.football.api-sports.io/fixtures/statistics"
+    params = {"fixture": fixture_id}
+    resposta = requests.get(url, headers=headers_football, params=params)
+    if resposta.status_code == 200:
+        return resposta.json().get('response', [])
+    return []
+
+@st.cache_data(ttl=120)
+def get_odds_live(equipa_casa, equipa_fora):
+    # Pesquisa as odds de futebol na Europa em tempo real
+    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
+    resposta = requests.get(url)
+    if resposta.status_code == 200:
+        odds_data = resposta.json()
+        # Filtro simples: procura se o nome de uma das equipas está na lista das casas de apostas
+        for jogo in odds_data:
+            if equipa_casa[:5] in jogo['home_team'] or equipa_fora[:5] in jogo['away_team']:
+                return jogo['bookmakers']
+    return "Odds dinâmicas não encontradas automaticamente pela API."
+
+# 3. Interface Visual e Cérebro IA
+st.set_page_config(page_title="AI Betting Pro", layout="wide")
+st.title("⚽ AI Betting: Analisador Real-Time")
+
+tab1, tab2 = st.tabs(["🎯 Jogos Ao Vivo (APIs)", "🧠 Análise Manual (Cérebro IA)"])
 
 # ==========================================
-# TABA 1: DADOS AUTOMÁTICOS (APIs)
+# TABA 1: MOTOR DE DADOS REAIS
 # ==========================================
 with tab1:
-    st.header("Análise Automática de Jogos em Direto")
+    st.header("Análise de Jogos a Decorrer")
     
-    # Simulação de seleção de jogo (Na prática viria da API-Football)
-    jogo_selecionado = st.selectbox("Escolhe um jogo a decorrer:", 
-                                    ["Benfica vs FC Porto (Minuto 65')", "Real Madrid vs Man City (Minuto 80')"])
+    # Botão para forçar uma limpeza à cache e buscar novos jogos
+    if st.button("🔄 Atualizar Lista de Jogos Ao Vivo"):
+        st.cache_data.clear()
     
-    if st.button("Analisar Jogo e Procurar Valor"):
-        st.info("A ir buscar dados à API-Football e Odds-API...")
+    # Vai buscar os jogos à API
+    jogos = get_jogos_live()
+    
+    if not jogos:
+        st.warning("Não há jogos a decorrer neste momento ou atingiste o limite da API (100 requests).")
+    else:
+        # Criar um menu limpo para o utilizador escolher o jogo
+        opcoes_jogos = {}
+        for j in jogos:
+            fixture_id = j['fixture']['id']
+            tempo = j['fixture']['status']['elapsed']
+            casa = j['teams']['home']['name']
+            fora = j['teams']['away']['name']
+            golos_casa = j['goals']['home']
+            golos_fora = j['goals']['away']
+            
+            nome_display = f"{tempo}' | {casa} {golos_casa} - {golos_fora} {fora}"
+            opcoes_jogos[nome_display] = (fixture_id, casa, fora, golos_casa, golos_fora, tempo)
         
-        # --- AQUI ENTRA O TEU CÓDIGO DE API REAL ---
-        # 1. requests.get("url_api_football...")
-        # 2. requests.get("url_odds_api...")
+        jogo_selecionado = st.selectbox("Escolhe o jogo que queres dissecar:", list(opcoes_jogos.keys()))
         
-        # Dados simulados que a API te daria
-        dados_simulados = {
-            "tempo": "65",
-            "resultado": "0-1",
-            "estatisticas": {
-                "Equipa da Casa": {"posse": 68, "remates_baliza": 8, "ataques_perigosos": 54, "red_cards": 0},
-                "Equipa Fora": {"posse": 32, "remates_baliza": 1, "ataques_perigosos": 12, "red_cards": 1}
-            },
-            "odds_atuais": {"Casa": 3.20, "Empate": 2.50, "Fora": 1.80}
-        }
-        
-        st.json(dados_simulados) # Mostra os dados crus na app
-        
-        st.subheader("🧠 Análise da IA:")
-        # --- AQUI CHAMAS A API DO GEMINI/CHATGPT ---
-        # Exemplo de como a IA responderia com base num bom prompt:
-        resposta_ia = """
-        **🔥 Dinheiro Escondido (Value Bet):** Vitória da Equipa da Casa (Odd 3.20).
-        **Justificação:** A equipa da casa está a perder, mas tem 68% de posse de bola, 8 remates à baliza e a equipa visitante tem um jogador a menos (red card). A pressão é avassaladora e a odd de 3.20 para a reviravolta tem um valor esperado positivo (EV+) altíssimo. A casa de apostas está a reagir apenas ao resultado e não à dinâmica do jogo.
-        
-        **🎯 Correct Score Prognóstico:** 2-1 para a Equipa da Casa.
-        """
-        st.success(resposta_ia)
+        # Só gasta pedidos pesados (Estatísticas) quando clicas aqui
+        if st.button("Analisar Valor Real (Gastar Request)"):
+            fixture_id, casa, fora, golos_casa, golos_fora, tempo = opcoes_jogos[jogo_selecionado]
+            
+            with st.spinner("A recolher telemetria do jogo e a cruzar com mercados..."):
+                stats = get_estatisticas_jogo(fixture_id)
+                odds = get_odds_live(casa, fora)
+                
+                st.subheader(f"📊 Dados Brutos: {casa} vs {fora}")
+                col1, col2 = st.columns(2)
+                col1.write("**Estatísticas (API-Football):**")
+                col1.json(stats)
+                col2.write("**Mercado H2H (The-Odds-API):**")
+                col2.write(odds)
+                
+                # --- O CÉREBRO DA IA ENTRA AQUI ---
+                st.subheader("🧠 Veredicto do Cérebro Artificial")
+                
+                prompt_sistema = """
+                És um apostador desportivo profissional e um analista tático de futebol de elite. 
+                O teu objetivo é encontrar discrepâncias entre as odds e a probabilidade real (Value Bets).
+                Analisa as estatísticas reais fornecidas (posse, remates, ataques perigosos) face ao resultado e tempo do jogo.
+                Não sejas conservador. Diz exatamente onde está o dinheiro mal posicionado.
+                Dá sempre um palpite de Correct Score justificado.
+                Se as odds reais não forem passadas, faz a análise com base no valor intrínseco de uma virada/manutenção de resultado.
+                Responde de forma estruturada: 
+                1. Leitura de Jogo. 
+                2. Aposta de Valor Recomendada (Onde está o dinheiro). 
+                3. Prognóstico Correct Score.
+                """
+                
+                prompt_usuario = f"Minuto: {tempo}'. Resultado Atual: {casa} {golos_casa} - {golos_fora} {fora}. Estatísticas: {stats}. Odds Atuais: {odds}."
+                
+                try:
+                    # Usamos o gemini-pro para lógica pesada
+                    model = genai.GenerativeModel('gemini-1.5-pro') 
+                    resposta_ia = model.generate_content(prompt_sistema + "\n\n" + prompt_usuario)
+                    st.success(resposta_ia.text)
+                except Exception as e:
+                    st.error(f"Erro ao contactar a inteligência artificial: {e}")
 
 
 # ==========================================
-# TABA 2: INSERÇÃO MANUAL
+# TABA 2: INSERÇÃO MANUAL DE CONTEXTO
 # ==========================================
 with tab2:
-    st.header("Análise Manual (Jogos sem API)")
-    st.markdown("Insere os dados que tens sobre o jogo. A IA vai usar o seu raciocínio futebolístico e contextual (lesões, motivação, relvado) para analisar.")
+    st.header("Análise Manual (Quando não há dados API)")
+    st.markdown("Insere os dados em formato livre para jogos obscuros ou para adicionares contexto humano (ex: lesões, nevoeiro, relvado).")
     
     col1, col2 = st.columns(2)
     with col1:
-        equipa_a = st.text_input("Equipa A (Casa)")
-        contexto_a = st.text_area("Contexto Equipa A (Ex: Precisa de ganhar para não descer, PL titular lesionado)")
+        jogo_manual = st.text_input("Equipas (Ex: Porto vs Sporting)")
+        resultado_minuto = st.text_input("Tempo e Resultado (Ex: 85' | 1-2)")
     with col2:
-        equipa_b = st.text_input("Equipa B (Fora)")
-        contexto_b = st.text_area("Contexto Equipa B (Ex: Já foi campeã, vai rodar a equipa)")
-        
-    odds_mercado = st.text_input("Odds que encontraste no mercado (Ex: 1: 2.10 | X: 3.00 | 2: 3.50)")
+        odds_mercado = st.text_input("Odds nas Casas (Ex: Casa: 5.0, Empate 3.2, Fora: 1.1)")
+        dados_extra = st.text_area("Contexto Estatístico/Humano (Ex: Porto com 80% posse, 10 cantos nos últimos 15 min. Sporting a defender no bloco baixo.)")
     
-    if st.button("Pedir Análise ao Cérebro IA"):
-        # Vais compilar isto num prompt e enviar para a API da IA
-        prompt = f"Analisa o jogo {equipa_a} vs {equipa_b}. Contexto A: {contexto_a}. Contexto B: {contexto_b}. Odds: {odds_mercado}. Onde está o valor?"
-        
-        with st.spinner("A analisar o contexto tático e psicológico..."):
-            # Simulação da resposta da IA
-            st.write("### O Veredicto da IA")
-            st.write(f"**Análise de Risco:** O mercado está a dar favoritismo ao {equipa_a} com uma odd de 2.10, mas ignoram que o {equipa_b}, mesmo rodando a equipa, tem jovens da formação a querer mostrar serviço contra uma equipa nervosa por causa da despromoção.")
-            st.write("**Aposta Recomendada:** Empate anula aposta (Draw No Bet) no {equipa_b}.")
-            st.write("**Prognóstico Correct Score:** 1-1 ou 0-1.")
+    if st.button("Análise Profunda com IA"):
+        if dados_extra:
+            with st.spinner("A fundir o teu conhecimento com o meu modelo desportivo..."):
+                model = genai.GenerativeModel('gemini-1.5-pro')
+                prompt = f"""
+                Age como apostador profissional focado em Value Bets.
+                Jogo: {jogo_manual} ao minuto {resultado_minuto}.
+                Odds atuais na casa: {odds_mercado}.
+                Contexto do utilizador: {dados_extra}.
+                Diz-me qual a aposta de valor e dá um correct score justificado de forma fria e analítica.
+                """
+                analise = model.generate_content(prompt)
+                st.success(analise.text)
+        else:
+            st.warning("Tens de me dar algum contexto para eu conseguir analisar!")
