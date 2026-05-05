@@ -104,7 +104,7 @@ with tab1:
                 
                 try:
                     resposta_ia = client.chat.completions.create(
-                        model="llama3-70b-8192", # O modelo gratuito e super inteligente da Meta
+                        model="llama-3.3-70b-versatile", # O modelo gratuito e super inteligente da Meta
                         messages=[
                             {"role": "system", "content": prompt_sistema},
                             {"role": "user", "content": prompt_usuario}
@@ -130,7 +130,7 @@ with tab2:
             with st.spinner("A analisar com Llama 3..."):
                 try:
                     resposta_ia = client.chat.completions.create(
-                        model="llama3-70b-8192",
+                        model="llama-3.3-70b-versatile",
                         messages=[
                             {"role": "system", "content": "Age como apostador profissional focado em Value Bets. Responde em Português de Portugal. Dá a aposta de valor e correct score."},
                             {"role": "user", "content": f"Jogo: {jogo_manual} aos {resultado_minuto}. Odds: {odds_mercado}. Contexto: {dados_extra}."}
