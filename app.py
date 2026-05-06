@@ -93,11 +93,14 @@ def obter_estatisticas_combinadas(fixture_id, equipa_casa, equipa_fora):
 @st.cache_data(ttl=120)
 def obter_odds_combinadas(fixture_id, equipa_casa, equipa_fora):
     odds_finais = {}
-    def nomes_parecidos(n1, n2): return difflib.SequenceMatcher(None, str(n1).lower(), str(n2).lower()).ratio() > 0.55
+    def nomes_parecidos(n1, n2):
+        if not n1 or not n2: return False
+        # Baixamos a tolerância para 45% para garantir que encontra mais jogos
+        return difflib.SequenceMatcher(None, str(n1).lower(), str(n2).lower()).ratio() > 0.45
 
-    # 1. The-Odds-API
+    # --- FONTE 1: The-Odds-API ---
     try:
-        res = requests.get(f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal", timeout=5)
+        res = requests.get(f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={st.secrets['ODDS_API_KEY']}&regions=eu&markets=h2h&oddsFormat=decimal", timeout=7)
         if res.status_code == 200:
             for j in res.json():
                 if nomes_parecidos(equipa_casa, j['home_team']) and nomes_parecidos(equipa_fora, j['away_team']):
@@ -105,20 +108,24 @@ def obter_odds_combinadas(fixture_id, equipa_casa, equipa_fora):
                     break
     except: pass
 
-    # 2. Odds-API.io (Novo)
+    # --- FONTE 2: Odds-API.io ---
     try:
-        if ODDS_API_IO_KEY:
-            res = requests.get(f"https://odds-api.io/api/v1/live?apikey={ODDS_API_IO_KEY}", timeout=5)
+        key_io = st.secrets.get("ODDS_API_IO_KEY", "")
+        if key_io:
+            # Tentativa no endpoint de odds gerais (mais estável que o live)
+            res = requests.get(f"https://odds-api.io/api/v1/odds?apikey={key_io}", timeout=7)
             if res.status_code == 200:
                 for j in res.json():
-                    if nomes_parecidos(equipa_casa, j.get('home_team',{}).get('name')) and nomes_parecidos(equipa_fora, j.get('away_team',{}).get('name')):
+                    # Esta API às vezes usa 'home_name' em vez de 'home_team'
+                    h = j.get('home_team', {}).get('name') or j.get('home_name')
+                    if nomes_parecidos(equipa_casa, h):
                         odds_finais['Odds-API-IO'] = j.get('odds', [])
                         break
     except: pass
 
-    # 3. API-Football
+    # --- FONTE 3: API-Football ---
     try:
-        res = requests.get("https://v3.football.api-sports.io/odds/live", headers=headers_football, params={"fixture": fixture_id}, timeout=5)
+        res = requests.get("https://v3.football.api-sports.io/odds/live", headers=headers_football, params={"fixture": fixture_id}, timeout=7)
         if res.status_code == 200 and res.json().get('response'):
             odds_finais['API-Football'] = res.json()['response'][0].get('bookmakers', [])
     except: pass
@@ -146,15 +153,40 @@ def desenhar_tabela_odds(odds_brutas, nome_casa):
         if isinstance(bookies, list) and bookies:
             st.markdown(f"**Fonte:** {fonte}")
             tabela = []
-            if fonte in ['The-Odds-API', 'Odds-API-IO']:
-                # Simplificação para visualização rápida
+            
+            if fonte == 'The-Odds-API':
                 for b in bookies:
-                    tabela.append({"Casa": b.get('title', 'API-IO'), "1": "Ver IA", "X": "Ver IA", "2": "Ver IA"})
+                    odd_1, odd_x, odd_2 = "-", "-", "-"
+                    for m in b.get('markets', []):
+                        if m['key'] == 'h2h':
+                            for o in m['outcomes']:
+                                if o['name'] == 'Draw': odd_x = o['price']
+                                elif nome_casa[:4].lower() in o['name'].lower(): odd_1 = o['price']
+                                else: odd_2 = o['price']
+                    tabela.append({"Casa": b.get('title'), "1": odd_1, "X": odd_x, "2": odd_2})
+
             elif fonte == 'API-Football':
                 for b in bookies:
-                    tabela.append({"Casa": b.get('name'), "1": "Ver IA", "X": "Ver IA", "2": "Ver IA"})
-            st.dataframe(tabela, use_container_width=True, hide_index=True)
+                    odd_1, odd_x, odd_2 = "-", "-", "-"
+                    for bet in b.get('bets', []):
+                        if str(bet.get('id')) == '1': # Market 1X2
+                            for v in bet.get('values', []):
+                                if v['value'].lower() == 'home': odd_1 = v['odd']
+                                elif v['value'].lower() == 'draw': odd_x = v['odd']
+                                elif v['value'].lower() == 'away': odd_2 = v['odd']
+                    tabela.append({"Casa": b.get('name'), "1": odd_1, "X": odd_x, "2": odd_2})
 
+            elif fonte == 'Odds-API-IO':
+                # Formato simples da Odds-API-IO
+                tabela.append({
+                    "Casa": "Mercado Global",
+                    "1": next((o.get('value') for o in bookies if o.get('name') == '1'), "-"),
+                    "X": next((o.get('value') for o in bookies if o.get('name') == 'X'), "-"),
+                    "2": next((o.get('value') for o in bookies if o.get('name') == '2'), "-")
+                })
+            
+            if tabela:
+                st.dataframe(tabela, use_container_width=True, hide_index=True)
 # ==========================================
 # 4. INTERFACE PRINCIPAL
 # ==========================================
