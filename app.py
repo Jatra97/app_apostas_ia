@@ -31,7 +31,7 @@ def obter_jogos_por_data(data_str):
     """Busca jogos agendados para uma data específica (YYYY-MM-DD)"""
     try:
         url = "https://v3.football.api-sports.io/fixtures"
-        params = {"date": data_str, "status": "NS"} # NS = Not Started (Agendados)
+        params = {"date": data_str, "status": "NS"} # NS = Not Started
         res = requests.get(url, headers=headers_football, params=params, timeout=10)
         return res.json().get('response', [])
     except: return []
@@ -201,7 +201,7 @@ st.title("⚽ AI Betting: Analisador Multi-API")
 
 tab1, tab2, tab3 = st.tabs(["🎯 Jogos Ao Vivo", "✍️ Análise Manual", "📅 Planeamento Pré-Jogo"])
 
-# --- TABA 1: LIVE ---
+# --- TAB 1: LIVE ---
 with tab1:
     if st.button("🔄 Atualizar Jogos"): st.cache_data.clear()
     jogos = obter_jogos_live_combinados()
@@ -224,7 +224,7 @@ with tab1:
                 res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": prompt_sis}, {"role": "user", "content": f"Dados: {s}, Odds: {o}, Placar: {j['casa']} {j['golos_casa']}-{j['golos_fora']} {j['fora']}"}])
                 st.success(res.choices[0].message.content)
 
-# --- TABA 2: MANUAL ---
+# --- TAB 2: MANUAL ---
 with tab2:
     st.header("✍️ Análise Manual")
     if 'p_casa' not in st.session_state: st.session_state.p_casa = 50
@@ -255,10 +255,10 @@ with tab2:
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": p_sis}, {"role": "user", "content": prompt_u}])
         st.success(res.choices[0].message.content)
 
-# --- TABA 3: PRÉ-JOGO ---
+# --- TAB 3: PRÉ-JOGO (COM FILTRO POR PAÍS) ---
 with tab3:
     st.header("📅 Planeamento Próximos Jogos")
-    col_d, _ = st.columns([1, 2])
+    col_d, col_p = st.columns(2)
     data_sel = col_d.date_input("Data do Jogo:", datetime.now() + timedelta(days=1))
     
     jogos_f = obter_jogos_por_data(data_sel.strftime("%Y-%m-%d"))
@@ -266,12 +266,20 @@ with tab3:
     if not jogos_f:
         st.info("Não foram encontrados jogos agendados para esta data.")
     else:
-        opcoes_f = {f"{j['teams']['home']['name']} vs {j['teams']['away']['name']} | {j['league']['name']}": j for j in jogos_f}
-        sel_f = st.selectbox("Selecione o jogo para analisar histórico:", list(opcoes_f.keys()))
+        # Extrair países únicos e ordenar alfabeticamente
+        lista_paises = sorted(list(set([j['league']['country'] for j in jogos_f])))
+        sel_pais = col_p.selectbox("Escolher País:", lista_paises)
         
-        if st.button("🔍 Analisar Pré-Jogo"):
+        # Filtrar jogos apenas do país selecionado
+        jogos_filtrados = [j for j in jogos_f if j['league']['country'] == sel_pais]
+        
+        # Agrupar por Liga para ficar ainda mais bonito no Selectbox
+        opcoes_f = {f"[{j['league']['name']}] {j['teams']['home']['name']} vs {j['teams']['away']['name']}": j for j in jogos_filtrados}
+        sel_f = st.selectbox("Selecione o jogo:", list(opcoes_f.keys()))
+        
+        if st.button("🔍 Analisar Histórico"):
             jogo_d = opcoes_f[sel_f]
-            with st.spinner("A processar histórico, H2H e forma..."):
+            with st.spinner(f"A recolher dados de {sel_pais}..."):
                 detalhes = obter_detalhes_pre_jogo(jogo_d['fixture']['id'])
                 
                 if detalhes:
@@ -279,24 +287,24 @@ with tab3:
                     col_h, col_a = st.columns(2)
                     with col_h:
                         st.subheader("🏠 " + jogo_d['teams']['home']['name'])
-                        st.write(f"**Forma:** {detalhes.get('teams', {}).get('home', {}).get('league', {}).get('form', 'N/A')}")
+                        st.write(f"**Forma Recente:** {detalhes.get('teams', {}).get('home', {}).get('league', {}).get('form', 'N/A')}")
                     with col_a:
                         st.subheader("✈️ " + jogo_d['teams']['away']['name'])
-                        st.write(f"**Forma:** {detalhes.get('teams', {}).get('away', {}).get('league', {}).get('form', 'N/A')}")
+                        st.write(f"**Forma Recente:** {detalhes.get('teams', {}).get('away', {}).get('league', {}).get('form', 'N/A')}")
                     
                     st.divider()
                     st.subheader("🧠 Veredicto Preditivo Llama 3.3")
                     
-                    p_pre = f"""Analisa este jogo de Pré-Jogo: {sel_f}.
+                    p_pre = f"""Analisa este jogo de Pré-Jogo: {sel_f} ({sel_pais}).
                     HISTÓRICO E FORMA: {detalhes.get('comparison')}
                     PREVISÃO API: {detalhes.get('predictions', {}).get('advice')}
                     FORÇA EQUIPAS: {detalhes.get('teams')}
                     
                     Tarefa: Com base na forma atual e confrontos diretos, recomenda o melhor mercado (ML, Over/Under ou Ambas Marcam). 
-                    Se vires risco excessivo, recomenda 'No Bet'. Português de Portugal."""
+                    Se vires risco excessivo, recomenda 'No Bet'. Responde sempre em Português de Portugal."""
                     
                     res_ia = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
-                        messages=[{"role": "system", "content": "Especialista em prognósticos de futebol."}, {"role": "user", "content": p_pre}]
+                        messages=[{"role": "system", "content": "Especialista em prognósticos de futebol profissional."}, {"role": "user", "content": p_pre}]
                     )
                     st.success(res_ia.choices[0].message.content)
