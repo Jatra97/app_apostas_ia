@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from groq import Groq
+import difflib
 
 # ==========================================
 # 1. CONFIGURAÇÃO E API KEYS
@@ -118,21 +119,35 @@ def obter_estatisticas_combinadas(fixture_id, equipa_casa, equipa_fora):
 @st.cache_data(ttl=120)
 def get_odds_live(equipa_casa, equipa_fora):
     odds_finais = {}
+    
+    # O "Cérebro" de comparação de texto (Mede a percentagem de semelhança dos nomes)
+    def nomes_parecidos(nome_api, nome_odds):
+        similaridade = difflib.SequenceMatcher(None, nome_api.lower(), nome_odds.lower()).ratio()
+        return similaridade > 0.55 # Se os nomes forem 55% iguais, assumimos que é a mesma equipa
+
     try:
         url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal"
         resposta = requests.get(url, timeout=5)
         if resposta.status_code == 200:
             odds_data = resposta.json()
             encontrou = False
+            
             for jogo in odds_data:
-                if equipa_casa[:5].lower() in jogo['home_team'].lower() or equipa_fora[:5].lower() in jogo['away_team'].lower():
+                casa_odds = jogo['home_team']
+                fora_odds = jogo['away_team']
+                
+                # Exigimos que AMBAS as equipas correspondam para não haver misturas
+                if (nomes_parecidos(equipa_casa, casa_odds) and nomes_parecidos(equipa_fora, fora_odds)) or \
+                   (nomes_parecidos(equipa_casa, fora_odds) and nomes_parecidos(equipa_fora, casa_odds)):
                     odds_finais['The-Odds-API'] = jogo['bookmakers']
                     encontrou = True
                     break
+                    
             if not encontrou:
-                odds_finais['The-Odds-API'] = "Odds dinâmicas não encontradas."
+                odds_finais['The-Odds-API'] = "Odds não encontradas para este jogo exato."
     except Exception:
         odds_finais['The-Odds-API'] = "Falha na ligação."
+        
     return odds_finais
 
 # ==========================================
