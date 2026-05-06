@@ -4,6 +4,7 @@ import difflib
 from groq import Groq
 from datetime import datetime, timedelta
 
+st.set_page_config(page_title="AI Betting Pro", page_icon="⚽", layout="wide")
 # ==========================================
 # 1. CONFIGURAÇÃO E API KEYS
 # ==========================================
