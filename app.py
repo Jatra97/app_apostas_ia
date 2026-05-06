@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import difflib
 from groq import Groq
+from datetime import datetime, timedelta
 
 # ==========================================
 # 1. CONFIGURAÇÃO E API KEYS
@@ -22,13 +23,31 @@ headers_football = {
 }
 
 # ==========================================
-# 2. FUNÇÕES DE DADOS (RESILIÊNCIA E CRUZAMENTO)
+# 2. FUNÇÕES DE DADOS (LIVE E PRÉ-JOGO)
 # ==========================================
+
+@st.cache_data(ttl=3600)
+def obter_jogos_por_data(data_str):
+    """Busca jogos agendados para uma data específica (YYYY-MM-DD)"""
+    try:
+        url = "https://v3.football.api-sports.io/fixtures"
+        params = {"date": data_str, "status": "NS"} # NS = Not Started (Agendados)
+        res = requests.get(url, headers=headers_football, params=params, timeout=10)
+        return res.json().get('response', [])
+    except: return []
+
+@st.cache_data(ttl=3600)
+def obter_detalhes_pre_jogo(fixture_id):
+    """Busca H2H e estatísticas de forma para análise pré-jogo"""
+    try:
+        url = "https://v3.football.api-sports.io/predictions"
+        res = requests.get(url, headers=headers_football, params={"fixture": fixture_id}, timeout=10)
+        return res.json().get('response', [{}])[0]
+    except: return {}
 
 @st.cache_data(ttl=60)
 def obter_jogos_live_combinados():
     jogos_formatados = []
-    # Tentativa 1: API-Football
     try:
         url_1 = "https://v3.football.api-sports.io/fixtures"
         params = {"live": "all"}
@@ -48,7 +67,6 @@ def obter_jogos_live_combinados():
             if jogos_formatados: return jogos_formatados
     except: pass 
 
-    # Tentativa 2: AllSportsAPI
     try:
         if ALLSPORTS_API_KEY:
             url_2 = f"https://apiv2.allsportsapi.com/football/?met=Livescore&APIkey={ALLSPORTS_API_KEY}"
@@ -72,13 +90,11 @@ def obter_jogos_live_combinados():
 @st.cache_data(ttl=60)
 def obter_estatisticas_combinadas(fixture_id, equipa_casa, equipa_fora):
     stats_finais = {}
-    # API-Football
     try:
         res = requests.get("https://v3.football.api-sports.io/fixtures/statistics", headers=headers_football, params={"fixture": fixture_id}, timeout=5)
         stats_finais['API-Football'] = res.json().get('response', []) if res.status_code==200 else "Indisponível"
     except: stats_finais['API-Football'] = "Erro"
 
-    # AllSportsAPI
     try:
         if ALLSPORTS_API_KEY:
             res = requests.get(f"https://apiv2.allsportsapi.com/football/?met=Livescore&APIkey={ALLSPORTS_API_KEY}", timeout=5)
@@ -95,10 +111,8 @@ def obter_odds_combinadas(fixture_id, equipa_casa, equipa_fora):
     odds_finais = {}
     def nomes_parecidos(n1, n2):
         if not n1 or not n2: return False
-        # Baixamos a tolerância para 45% para garantir que encontra mais jogos
         return difflib.SequenceMatcher(None, str(n1).lower(), str(n2).lower()).ratio() > 0.45
 
-    # --- FONTE 1: The-Odds-API ---
     try:
         res = requests.get(f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={st.secrets['ODDS_API_KEY']}&regions=eu&markets=h2h&oddsFormat=decimal", timeout=7)
         if res.status_code == 200:
@@ -108,22 +122,18 @@ def obter_odds_combinadas(fixture_id, equipa_casa, equipa_fora):
                     break
     except: pass
 
-    # --- FONTE 2: Odds-API.io ---
     try:
         key_io = st.secrets.get("ODDS_API_IO_KEY", "")
         if key_io:
-            # Tentativa no endpoint de odds gerais (mais estável que o live)
             res = requests.get(f"https://odds-api.io/api/v1/odds?apikey={key_io}", timeout=7)
             if res.status_code == 200:
                 for j in res.json():
-                    # Esta API às vezes usa 'home_name' em vez de 'home_team'
                     h = j.get('home_team', {}).get('name') or j.get('home_name')
                     if nomes_parecidos(equipa_casa, h):
                         odds_finais['Odds-API-IO'] = j.get('odds', [])
                         break
     except: pass
 
-    # --- FONTE 3: API-Football ---
     try:
         res = requests.get("https://v3.football.api-sports.io/odds/live", headers=headers_football, params={"fixture": fixture_id}, timeout=7)
         if res.status_code == 200 and res.json().get('response'):
@@ -153,7 +163,6 @@ def desenhar_tabela_odds(odds_brutas, nome_casa):
         if isinstance(bookies, list) and bookies:
             st.markdown(f"**Fonte:** {fonte}")
             tabela = []
-            
             if fonte == 'The-Odds-API':
                 for b in bookies:
                     odd_1, odd_x, odd_2 = "-", "-", "-"
@@ -164,37 +173,35 @@ def desenhar_tabela_odds(odds_brutas, nome_casa):
                                 elif nome_casa[:4].lower() in o['name'].lower(): odd_1 = o['price']
                                 else: odd_2 = o['price']
                     tabela.append({"Casa": b.get('title'), "1": odd_1, "X": odd_x, "2": odd_2})
-
             elif fonte == 'API-Football':
                 for b in bookies:
                     odd_1, odd_x, odd_2 = "-", "-", "-"
                     for bet in b.get('bets', []):
-                        if str(bet.get('id')) == '1': # Market 1X2
+                        if str(bet.get('id')) == '1':
                             for v in bet.get('values', []):
                                 if v['value'].lower() == 'home': odd_1 = v['odd']
                                 elif v['value'].lower() == 'draw': odd_x = v['odd']
                                 elif v['value'].lower() == 'away': odd_2 = v['odd']
                     tabela.append({"Casa": b.get('name'), "1": odd_1, "X": odd_x, "2": odd_2})
-
             elif fonte == 'Odds-API-IO':
-                # Formato simples da Odds-API-IO
                 tabela.append({
                     "Casa": "Mercado Global",
                     "1": next((o.get('value') for o in bookies if o.get('name') == '1'), "-"),
                     "X": next((o.get('value') for o in bookies if o.get('name') == 'X'), "-"),
                     "2": next((o.get('value') for o in bookies if o.get('name') == '2'), "-")
                 })
-            
             if tabela:
                 st.dataframe(tabela, use_container_width=True, hide_index=True)
+
 # ==========================================
 # 4. INTERFACE PRINCIPAL
 # ==========================================
 st.set_page_config(page_title="AI Betting Pro", layout="wide")
 st.title("⚽ AI Betting: Analisador Multi-API")
 
-tab1, tab2 = st.tabs(["🎯 Jogos Ao Vivo", "✍️ Análise Manual"])
+tab1, tab2, tab3 = st.tabs(["🎯 Jogos Ao Vivo", "✍️ Análise Manual", "📅 Planeamento Pré-Jogo"])
 
+# --- TABA 1: LIVE ---
 with tab1:
     if st.button("🔄 Atualizar Jogos"): st.cache_data.clear()
     jogos = obter_jogos_live_combinados()
@@ -217,6 +224,7 @@ with tab1:
                 res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": prompt_sis}, {"role": "user", "content": f"Dados: {s}, Odds: {o}, Placar: {j['casa']} {j['golos_casa']}-{j['golos_fora']} {j['fora']}"}])
                 st.success(res.choices[0].message.content)
 
+# --- TABA 2: MANUAL ---
 with tab2:
     st.header("✍️ Análise Manual")
     if 'p_casa' not in st.session_state: st.session_state.p_casa = 50
@@ -225,10 +233,10 @@ with tab2:
     def up_c(): st.session_state.p_casa = 100 - st.session_state.p_fora
     
     c1, c2, c3, c4 = st.columns(4)
-    casa = c1.text_input("Casa", "Equipa A")
+    casa_m = c1.text_input("Casa", "Equipa A")
     g_c = c2.number_input("G Casa", 0)
     g_f = c3.number_input("G Fora", 0)
-    fora = c4.text_input("Fora", "Equipa B")
+    fora_m = c4.text_input("Fora", "Equipa B")
     
     col_s1, col_s2 = st.columns(2)
     with col_s1:
@@ -243,6 +251,52 @@ with tab2:
     contexto = st.text_area("Contexto Extra")
     if st.button("🧠 Analisar Manual"):
         p_sis = "Apostador profissional. Se não houver valor, diz 'No Bet'. Português de Portugal."
-        prompt_u = f"{casa} {g_c}-{g_f} {fora}. Stats: Posse {st.session_state.p_casa}%, Remates {rem_c}, Cantos {can_c}. Contexto: {contexto}"
+        prompt_u = f"{casa_m} {g_c}-{g_f} {fora_m}. Stats: Posse {st.session_state.p_casa}%, Remates {rem_c}, Cantos {can_c}. Contexto: {contexto}"
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "system", "content": p_sis}, {"role": "user", "content": prompt_u}])
         st.success(res.choices[0].message.content)
+
+# --- TABA 3: PRÉ-JOGO ---
+with tab3:
+    st.header("📅 Planeamento Próximos Jogos")
+    col_d, _ = st.columns([1, 2])
+    data_sel = col_d.date_input("Data do Jogo:", datetime.now() + timedelta(days=1))
+    
+    jogos_f = obter_jogos_por_data(data_sel.strftime("%Y-%m-%d"))
+    
+    if not jogos_f:
+        st.info("Não foram encontrados jogos agendados para esta data.")
+    else:
+        opcoes_f = {f"{j['teams']['home']['name']} vs {j['teams']['away']['name']} | {j['league']['name']}": j for j in jogos_f}
+        sel_f = st.selectbox("Selecione o jogo para analisar histórico:", list(opcoes_f.keys()))
+        
+        if st.button("🔍 Analisar Pré-Jogo"):
+            jogo_d = opcoes_f[sel_f]
+            with st.spinner("A processar histórico, H2H e forma..."):
+                detalhes = obter_detalhes_pre_jogo(jogo_d['fixture']['id'])
+                
+                if detalhes:
+                    st.divider()
+                    col_h, col_a = st.columns(2)
+                    with col_h:
+                        st.subheader("🏠 " + jogo_d['teams']['home']['name'])
+                        st.write(f"**Forma:** {detalhes.get('teams', {}).get('home', {}).get('league', {}).get('form', 'N/A')}")
+                    with col_a:
+                        st.subheader("✈️ " + jogo_d['teams']['away']['name'])
+                        st.write(f"**Forma:** {detalhes.get('teams', {}).get('away', {}).get('league', {}).get('form', 'N/A')}")
+                    
+                    st.divider()
+                    st.subheader("🧠 Veredicto Preditivo Llama 3.3")
+                    
+                    p_pre = f"""Analisa este jogo de Pré-Jogo: {sel_f}.
+                    HISTÓRICO E FORMA: {detalhes.get('comparison')}
+                    PREVISÃO API: {detalhes.get('predictions', {}).get('advice')}
+                    FORÇA EQUIPAS: {detalhes.get('teams')}
+                    
+                    Tarefa: Com base na forma atual e confrontos diretos, recomenda o melhor mercado (ML, Over/Under ou Ambas Marcam). 
+                    Se vires risco excessivo, recomenda 'No Bet'. Português de Portugal."""
+                    
+                    res_ia = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "system", "content": "Especialista em prognósticos de futebol."}, {"role": "user", "content": p_pre}]
+                    )
+                    st.success(res_ia.choices[0].message.content)
